@@ -3,7 +3,7 @@ An interactive visualization tool for various types of functions: classical, par
 
 ## Prerequisites
 
-Before running this project, you need to have the following Python libraries installed:
+Following Python libraries are required:
 
 - **numpy**
 - **scipy**
@@ -12,15 +12,17 @@ Before running this project, you need to have the following Python libraries ins
 - **pygame**
 - **threading**
 
-Note: The libraries `io`, `tkinter`, and `math` are built-in and should be available automatically.
+with built-in libraries `io`, `tkinter`, and `math` 
 
 ## Setup Instructions
 
-Follow these steps to set up and run the project on your local machine:
+Just:
 
-### 1. Clone the Repository
-First, clone the repository to your local machine. Open your terminal/command prompt and run:
+### 1. 
+clone/copy the repository 
 
-```bash
-git clone https://github.com/d4sky/visual_funcs.git
+### 2. 
 cd visual_funcs
+
+### 3. 
+python3 run.py
