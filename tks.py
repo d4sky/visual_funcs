@@ -8,53 +8,37 @@ from PIL import Image, ImageTk
 
 import funs
 
-gr_types = {}
-gr_types[0] = ['xy']
-gr_types[1] = ['xy', 'tx', 'ty']
-gr_types[2] = ['xyz', 'tx', 'ty', 'tz']
-
-dg_types = {}
-dg_types[0] = 'xy'
-dg_types[1] = 'tx'
-dg_types[2] = 'ty'
-dg_types[3] = 'tz'
-dg_types[4] = 'xyz'
-
-fn_label = {}
-fn_label['xy'] = "y = f(x)"
-fn_label['tx'] = "x = f(t)"
-fn_label['ty'] = "y = f(t)"
-fn_label['tz'] = "z = f(t)"
-fn_label['xyz'] = "z = f(x,y)"
-
 area_colors = {}
 area_colors[1] = (255, 255, 255)
 area_colors[2] = (212, 255, 255)
 area_colors[3] = (255, 232, 255)
 area_colors[4] = (255, 255, 222)
 
-def Resize_formula_image(inp_image):
-    # Resize the image manually while preserving aspect ratio
-    image_width, image_height = inp_image.size
-    max_width = 100
-    max_height = 50
+def get_color_for_area(areaID):
+    if areaID in area_colors:
+        R, G, B = area_colors[areaID][0], area_colors[areaID][1], area_colors[areaID][2]
+        return f"#{R:02x}{G:02x}{B:02x}"  # Format as a hex color code
+    else:
+        return "lightblue"
 
-    max_width = 100
-    max_height = 50
-
-    # Calculate the new size based on the aspect ratio
+def Resize_formula_image(image):
+    image_width, image_height = image.size
+    max_width = 2800
+    max_height = 500
+    
     if image_width > image_height:
+      if image_width > max_width:
         new_width = max_width
         new_height = int(new_width * image_height / image_width)
+        #image = image.resize((new_width, new_height), Image.LANCZOS)
+        image = image.resize((new_width, new_height))
     else:
+      if image_height > max_height:
         new_height = max_height
         new_width = int(new_height * image_width / image_height)
-
-    # Resize the image with anti-aliasing for smoother results
-    resized_image = inp_image.resize((new_width, new_height), Image.LANCZOS)
-
-    # Convert to Tkinter format
-    return ImageTk.PhotoImage(resized_image)
+        image = image.resize((new_width, new_height), Image.LANCZOS)
+    
+    return ImageTk.PhotoImage(image)
 
 class AreaPtr:
      def __init__(self, areaID):
@@ -67,7 +51,6 @@ class ControlPanel:
         self.shared_item = shared_item
         self.what = what
         self.param = param
-        #self.pLabel = param_label
 
         self.DEC_FACTOR = sFactor
         
@@ -85,25 +68,16 @@ class ControlPanel:
         self.control_frame = tk.Frame(parent_frame, bd=1, relief=tk.SOLID)
         self.control_frame.pack(pady=5, padx=10, fill=tk.X)
         
-        # Parameter name label on the left
         param_name = alt_name if alt_name != '' else param
-        #self.param_label = tk.Label(self.control_frame, text=param, width=5, anchor="w")
         self.param_label = tk.Label(self.control_frame, text=param_name, width=5, anchor="w")
         self.param_label.pack(side=tk.LEFT, padx=5)
         
-        # Current value label next to the slider
-        #self.value_label = tk.Label(self.control_frame, text=str(int(initial_value)), width=6)
-        #self.value_label = tk.Label(self.control_frame, text=str(int(initial_value)))
-     
         self.value_label = tk.Label(self.control_frame, text=str(int(self.scaled_act_value)))
         self.value_label.pack(side=tk.LEFT, padx=5)
 
-        # Decrease button
         self.decrease_button = tk.Button(self.control_frame, text=f"-{self.step}", command=self.decrease_value)
         self.decrease_button.pack(side=tk.LEFT, padx=5)
 
-        # Minimum value label
-        #self.min_label = tk.Label(self.control_frame, text=str(self.min_value))
         self.min_label = tk.Label(self.control_frame, text=f"{self.min_value:.2f}")
         self.min_label.pack(side=tk.LEFT, padx=2)
 
@@ -113,21 +87,16 @@ class ControlPanel:
                 from_ = self.scaled_min_value,
                 to_   = self.scaled_max_value,
                 orient=tk.HORIZONTAL,
-                command=self.update_value,
                 showvalue=0
             )
             self.slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
         
-        # Maximum value label
-        #self.max_label = tk.Label(self.control_frame, text=str(self.max_value))
         self.max_label = tk.Label(self.control_frame, text=f"{self.max_value:.2f}")
         self.max_label.pack(side=tk.LEFT, padx=2)
         
-        # Increase button
         self.increase_button = tk.Button(self.control_frame, text=f"+{self.step}", command=self.increase_value)
         self.increase_button.pack(side=tk.LEFT, padx=5)
 
-        # Animation and properties buttons
         self.animate_left_button = tk.Button(self.control_frame, text="<", command=lambda: self.toggle_animation("left"))
         self.animate_left_button.pack(side=tk.LEFT, padx=2)
 
@@ -137,17 +106,23 @@ class ControlPanel:
         self.properties_button = tk.Button(self.control_frame, text="...", command=self.show_properties)
         self.properties_button.pack(side=tk.LEFT, padx=5)
 
-        # Set initial value
+        self.set_values()
+
+    def set_values(self):
+        self.scaled_act_value = int(self.act_value * self.DEC_FACTOR)
+        self.value_label.config(text=f"{self.act_value:.2f}")  # Update label with float value
+        self.slider.config(command='')
         self.slider.set(self.scaled_act_value)
+        self.slider.config(command=self.update_value)
 
     def scale_set_values(self):
         self.scaled_min_value = int(self.min_value * self.DEC_FACTOR)
+        if self.scaled_min_value == 0: self.scaled_min_value = 1
         self.scaled_max_value = int(self.max_value * self.DEC_FACTOR)
         self.scaled_act_value = int(self.act_value * self.DEC_FACTOR)
         self.scaled_step      = int(self.step * self.DEC_FACTOR)
 
     def toggle_animation(self, direction):
-        # Stop any ongoing animation before starting a new one
         if self.animating == direction:
             self.stop_animation()
         else:
@@ -201,11 +176,7 @@ class ControlPanel:
             self.act_value = float_val
         else:
             self.act_value = val
-            self.scaled_act_value = int(self.act_value * self.DEC_FACTOR)
-            self.slider.config(command='')
-            self.slider.set(self.scaled_act_value)
-            self.slider.config(command=self.update_value)
-            self.value_label.config(text=f"{val:.2f}")  # Update label with float value
+            self.set_values()
             
         if   self.what == 'curve':
           self.shared_item.set_param(self.param, self.act_value)
@@ -217,7 +188,6 @@ class ControlPanel:
           print("Wrong passed type")
 
     def show_properties(self):
-        # Open a new Toplevel window as a modal popup
         self.popup = tk.Toplevel(self.parent_frame)
         self.popup.title(f"Properties for {self.param}")
         self.popup.geometry("400x300")
@@ -229,31 +199,24 @@ class ControlPanel:
         
         # Display main label with the curve name
         tk.Label(self.popup, text=f"Curve: {self.shared_item.name}", font=("Arial", 12, "bold")).pack(pady=5)
-
         # Display parameter name
         tk.Label(self.popup, text=f"Parameter: {self.param}", font=("Arial", 10)).pack(pady=5)
 
-        # Min value input
         tk.Label(self.popup, text="Min Value:").pack(anchor="w", padx=10)
         self.min_entry = tk.Entry(self.popup)
         self.min_entry.insert(0, str(self.min_value))
         self.min_entry.pack(fill="x", padx=10)
 
-        # Max value input
         tk.Label(self.popup, text="Max Value:").pack(anchor="w", padx=10)
         self.max_entry = tk.Entry(self.popup)
         self.max_entry.insert(0, str(self.max_value))
         self.max_entry.pack(fill="x", padx=10)
 
-        # Step value input
         tk.Label(self.popup, text="Increment Step:").pack(anchor="w", padx=10)
-        #self.step_entry = tk.Entry(self.popup)
-        #self.step_entry = tk.Entry(self.popup, validate="key", validatecommand=vcmd)
         self.step_entry = tk.Entry(self.popup, validate="key")
         self.step_entry.insert(0, str(self.step))
         self.step_entry.pack(fill="x", padx=10)
 
-        # Update button
         update_button = tk.Button(self.popup, text="Update", command=self.update_parameter_settings)
         update_button.pack(pady=10)
         
@@ -268,7 +231,6 @@ class ControlPanel:
             return False
             
     def update_parameter_settings(self):
-        # Update the parameter settings and close the popup window.
         self.min_value = float(self.min_entry.get())
         self.max_value = float(self.max_entry.get())
         self.step = float(self.step_entry.get())
@@ -276,7 +238,6 @@ class ControlPanel:
         self.scale_set_values()
         
         # Apply changes to slider and labels
-        #self.slider.config(from_=self.min_value, to=self.max_value)
         self.slider.config(from_=self.scaled_min_value, to=self.scaled_max_value)
         self.min_label.config(text=str(self.min_value))
         self.max_label.config(text=str(self.max_value))
@@ -284,10 +245,8 @@ class ControlPanel:
         self.decrease_button.config(text=f"-{self.step}")
         self.increase_button.config(text=f"+{self.step}")
         
-        # Optionally update shared_item if it needs these values
         self.shared_item.set_param(self.param, self.slider.get())
         
-        # Close the popup
         self.popup.destroy()
     
 class AreaSelectionModal(tk.Toplevel):
@@ -296,22 +255,19 @@ class AreaSelectionModal(tk.Toplevel):
         self.pygame_instance = pygame_instance
         self.title("Select Area for Curve")
         
-        MaxNumAreas = 4
+        MaxNumAreas = 3
         
-        # Number of areas (columns)
         self.num_areas = min(max(num_areas, 1), MaxNumAreas + 1)  # Ensure num_areas is between 1 and 4
-
-        # Variable to hold user selections, initialized as a list of None
         self.selections = [tk.IntVar(value=(2 if i == 0 else 1)) for i in range(len(items))]
         
-        # Frame for the grid
+        self.was_closed = False
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
         grid_frame = tk.Frame(self)
         grid_frame.pack(padx=10, pady=10)
         
-        # Set up headers
         tk.Label(grid_frame, text="").grid(row=0, column=0, padx=5, pady=5)  # Empty top-left cell
         Ncols = max(self.num_areas + 1, len(items)+1)+2
-        #Adjust Ncols to maximal number of areas allowed
         Ncols = min(Ncols, MaxNumAreas + 2)
 
         for col in range(0, Ncols):
@@ -337,9 +293,12 @@ class AreaSelectionModal(tk.Toplevel):
         button_frame = tk.Frame(self)
         button_frame.pack(pady=10)
 
-        # "Select" button
         self.proceed_button = tk.Button(button_frame, text="Proceed...", command=self.select_areas)
         self.proceed_button.pack(side=tk.RIGHT, padx=5)
+        
+    def on_close(self):
+        self.was_closed = True 
+        self.destroy()         
         
     def select_areas(self):
         # Collect and print the selections as pairs of (item_index, selected_area_index)
@@ -352,52 +311,62 @@ class AreaSelectionModal(tk.Toplevel):
         self.destroy()  # Close the modal
 
 class TkinterWindow(tk.Tk):
-    def __init__(self, pygame_instance, cWinW = 600, cWinH = 400, dWin = 1000):
+    def __init__(self, pygame_instance, cWinW = 600, cWinH = 1000, dWin = 1000):
         super().__init__()  
+        
+        self.ControlWindow_w = cWinW
+        self.ControlWindow_h = cWinH
         self.db_path = 'curves.db'
         
         self.DisplayWindow = dWin
-        self.DisplayWindow = dWin
+        
         self.pygame_instance = pygame_instance  
         
-        # Set up the Tkinter window
         self.geometry(f"{cWinW}x{cWinH}")
         self.title("Tkinter Control Panel")
         
-        # Create a Listbox for curves
-        self.curve_listbox = tk.Listbox(self, selectmode=tk.SINGLE)
-        self.curve_listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-        # Add a scrollbar to the Listbox
-        scrollbar = tk.Scrollbar(self.curve_listbox)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.curve_listbox.config(yscrollcommand=scrollbar.set)
-        scrollbar.config(command=self.curve_listbox.yview)
+        upper_frame = tk.Frame(self)
+        upper_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        # Bind selection event for Listbox
-        self.curve_listbox.bind("<Double-Button-1>", self.on_curve_listbox_double_click)
-
-        # Populate the Listbox with data from SQLite
+        self.set_list_box(upper_frame)
         self.populate_listbox()
-       
-        self.curve_instances = {}
+
+        self.areas_section = tk.Frame()
+        self.set_areas_section(upper_frame)
  
-        # curveID as key:
+        self.curve_instances = {}
+        self.areas_panels = []
+ 
+        # curve_id is the KEY for all following dictionaries
         self.curve_sets   = {}  # collects which set of given Curve is on which plot area
         self.shown_sets   = {}  # attribute if the Area assignment for given Curve, Set and Ares is shown shown_sets[curve_id][set] = [AreaID1, AreaID1...]
         
         self.curve_frames = {}  # which TK frame has given Curve
-        self.areas_frames = {}  # TK frame for given Curve on which assignment to Areas are shown
+        self.areas_frames = {}  # frames for given Curve on which assignment to Areas are shown
         self.param_frames = {}  # collection of frames for all parameters for given Curve
         
         self.line_properties = {} 
         
-        # Handle the closing of the Tkinter window
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+        self.zoom_buttons = []
+
+    def set_list_box(self, parent_frame):
+        list_box_frame = tk.Frame(parent_frame)  # Set explicit width only
+        list_box_frame.pack(side=tk.LEFT)
+        
+        self.curve_listbox = tk.Listbox(list_box_frame, font=("Arial", 10), selectmode=tk.SINGLE, height = 8, width=50)
+        self.curve_listbox.pack(side=tk.LEFT, padx=5, pady=5) #fill=tk.BOTH, expand=True,
+        
+        scrollbar = tk.Scrollbar(list_box_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.curve_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.curve_listbox.yview)
+        
+        self.curve_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=0, pady=0)
+        self.curve_listbox.bind("<Double-Button-1>", self.on_curve_listbox_double_click)
+        
     def populate_listbox(self):
-        """Retrieve data from SQLite and populate the Listbox."""
         connection = sqlite3.connect(self.db_path)
         cursor = connection.cursor()
         cursor.execute("SELECT id, name FROM curves")
@@ -412,13 +381,9 @@ class TkinterWindow(tk.Tk):
         connection.close()
         
     def on_curve_listbox_double_click(self, event):
-        def adding_curve_wraper():
-          if setID == 0 and parametric == 2:
-            actDiagram = dg_types[4] #!!! Perhaps not optimal :-)
-          else:
-            actDiagram = dg_types[setID]
-              
-          self.add_curve_to_area(areaID, curveInstance, [actDiagram])  
+        def adding_curve_wraper(toScale=False):
+          actDiagram =  curveInstance.sets[setID]
+          self.add_curve_to_area(areaID, curveInstance, [actDiagram], toScale)  
           curveInstance.area[actDiagram] = areaID
           self.curve_sets[curve_id][actDiagram].append(AreaPtr(areaID))
         
@@ -432,18 +397,19 @@ class TkinterWindow(tk.Tk):
         connection = sqlite3.connect(self.db_path)
         cursor = connection.cursor()
 
-        curveSQL = f"SELECT ID, name, className, color, thickness, parametric, formula, radians, also3d FROM curves WHERE ID={curve_id};"
+        curveSQL = f"SELECT ID, name, className, color, thickness, parametric, formula, radians, also3d, scale FROM curves WHERE ID={curve_id};"
         curves = cursor.execute(curveSQL).fetchall()
-        curve_record = curves[0]
-        curve_id     = curve_record[0]
-        curve_name   = curve_record[1]
-        class_name   = curve_record[2]
-        curve_color  = curve_record[3]
-        curve_thickness =curve_record[4]
-        parametric   = int(curve_record[5])
-        formula_png  = curve_record[6]
-        t_in_radians = curve_record[7]
-        is_3d        = curve_record[8]
+        curve_record    = curves[0]
+        curve_id        = curve_record[0]
+        curve_name      = curve_record[1]
+        class_name      = curve_record[2]
+        curve_color     = curve_record[3]
+        curve_thickness = curve_record[4]
+        parametric      = int(curve_record[5])
+        formula_png     = curve_record[6]
+        t_in_radians    = curve_record[7]
+        is_3d           = curve_record[8]
+        scale           = curve_record[9]
         
         if formula_png: formula = Image.open(io.BytesIO(formula_png))
         else:           formula = ""
@@ -457,8 +423,6 @@ class TkinterWindow(tk.Tk):
             tIncr =  1.0
             tPts  = 10 
             for paramSet in params:
-                print("Param Set:")
-                print(paramSet)
                 paramName = paramSet[0]
                 paramType = paramSet[1]
                 magnitude = float(paramSet[2])
@@ -478,21 +442,14 @@ class TkinterWindow(tk.Tk):
                 nPts   = paramSet[7]
 
                 gotParams[paramName] = [defMin, defMax, actMin, actMax, actVal, incr, nPts]
-                
-            print("Got Parameters")
-            print(tMin, tMax, tIncr, tPts)
-            print(parametric, formula)
-            print(gotParams)
-            print('='*33)
+
+            new_curve = False
             if curve_id in self.curve_instances:
-                new_curve = False
                 curveInstance = self.curve_instances[curve_id]
             else:
-                new_curve = True
                 curveClass = getattr(funs, class_name)  # Get the class by name
-                #curveInstance = curveClass(color=curve_record[2], thickness=curve_record[3], x0=0.0, y0=0.0, tmin=tMin, tmax=tMax, tincr=tIncr, Npoints = tPts, is_parametric=parametric, formula=formula, inpParams=gotParams)
-                #curveInstance = curveClass(color=curve_color, thickness=curve_thickness, x0=0.0, y0=0.0, is_parametric=parametric, formula=formula, inpParams=gotParams)
                 curveInstance = curveClass(name=curve_name, color=curve_color, thickness=curve_thickness, is_parametric=parametric, formula=formula, inpParams=gotParams)
+                new_curve = True
                 self.curve_instances[curve_id] = curveInstance
                 self.curve_sets[curve_id] = {}
                 self.shown_sets[curve_id] = {}
@@ -507,16 +464,15 @@ class TkinterWindow(tk.Tk):
             
             subtraction = 0
             Nareas = len(self.pygame_instance.Areas)            
-            if Nareas == 1 and len(self.pygame_instance.Areas[1].curves) == 0 and parametric == 0:
-              self.add_curve_to_area(1, curveInstance, 'xy')
-              curveInstance.area['xy'] = 1
-              self.curve_sets[curve_id]['xy'].append(AreaPtr(1))
+            if Nareas == 1 and len(self.pygame_instance.Areas[1].curves) == 0 and len(curveInstance.sets) == 1:
+              diagSet = curveInstance.sets[0]
+              self.add_curve_to_area(1, curveInstance, diagSet, not scale)
+              curveInstance.area[diagSet] = 1
+              self.curve_sets[curve_id][diagSet].append(AreaPtr(1))
             else:
-              #area_modal = AreaSelectionModal(self, self.pygame_instance)
-              area_modal = AreaSelectionModal(self, self.pygame_instance, gr_types[parametric], Nareas)
+              area_modal = AreaSelectionModal(self, self.pygame_instance, curveInstance.sets, Nareas)
               self.wait_window(area_modal)
-              if area_modal:
-                  print(area_modal.result)
+              if not area_modal.was_closed:
                   areaToSet = {arID:[] for arID in range(1,5)}
                   for setID, areaID in area_modal.result.items():
                     areaToSet[areaID].append(setID)
@@ -530,18 +486,16 @@ class TkinterWindow(tk.Tk):
                         
                   Nadditions = len(additions) 
                   if Nadditions > 0:
-                      print("Will be added", Nareas, Nadditions)
                       stored_curves_dict = {areaID: area.curves for areaID, area in self.pygame_instance.Areas.items()}
                       stored_diags_dict  = {areaID: area.diags  for areaID, area in self.pygame_instance.Areas.items()}
                       stored_diags_dict = {areaID: {curve: area.diags[curve] for curve in area.curves} for areaID, area in self.pygame_instance.Areas.items()}
                       self.pygame_instance.arrange_areas(Nareas + Nadditions)
-                      #for area_id, curves in stored_curves_dict.items():
-                      #    self.add_curve_to_area(area_id, curves, stored_diags_dict[area_id])
                           
                       # Restore data to areas
                       for area_id, curves in stored_curves_dict.items():
                           for curve in curves:
                               self.add_curve_to_area(area_id, curve, stored_diags_dict[area_id][curve])
+                              new_curve = True
 
                   for areaID in range(1,Nareas + 1):  
                     for setID in areaToSet[areaID]:
@@ -550,18 +504,28 @@ class TkinterWindow(tk.Tk):
                   areaID = Nareas + 1
                   for adding in additions:
                     for setID in adding:
-                      adding_curve_wraper()
+                      adding_curve_wraper(not scale)
                     areaID += 1
               else:
                 print("Modal closed with 'x'")
+                if new_curve:
+                  if curve_id in self.curve_instances:
+                    del self.curve_instances[curve_id]
+                  if curve_id in self.curve_sets:
+                    del self.curve_sets[curve_id]
+                  if curve_id in self.shown_sets:
+                    del self.shown_sets[curve_id]
+                  new_curve = False
+
             if new_curve:
                 self.add_controls()  # Refresh control panels to reflect changes
-            self.update_controls()
+                self.update_controls()
         else:
             print(f"Class {class_name} not found in module 'funs'.")
         connection.close()
+        self.manage_areas_controls()
        
-    def add_curve_to_area(self, area_index, adding_curve_curves, set_sets):
+    def add_curve_to_area(self, area_index, adding_curve_curves, set_sets, uniform = True):
         if type(adding_curve_curves) == list:
             self.pygame_instance.Areas[area_index].curves.extend(adding_curve_curves)
             for curve in adding_curve_curves:
@@ -582,7 +546,7 @@ class TkinterWindow(tk.Tk):
             else:
                 if set_sets not in self.pygame_instance.Areas[area_index].diags[adding_curve_curves]:
                     self.pygame_instance.Areas[area_index].diags[adding_curve_curves].append(set_sets)
-        self.pygame_instance.Areas[area_index].set_scale()
+        self.pygame_instance.Areas[area_index].set_scale(uniform)
     
     def add_controls(self):
         for curve_id, curve in self.curve_instances.items():
@@ -594,94 +558,80 @@ class TkinterWindow(tk.Tk):
             self.areas_frames[curve_id] = []
             self.param_frames[curve_id] = []
 
-            #****************************************************************************************************
-            #  UPPER ROW-FRAME FOR THE CURVE
-            # Frame for the top row (curve name, formula image, HTML link)
+            # Upper Row-Frame for the Curve
             top_row_frame = tk.Frame(curve_frame)
-            top_row_frame.pack(side=tk.TOP, fill=tk.X)
+            top_row_frame.pack(side=tk.TOP, fill=tk.X)  # Keep the pack for top_row_frame
 
-            # Curve name label
-            curve_label = tk.Label(top_row_frame, text=f"{curve.name}", font=("Arial", 10, "bold"))
-            curve_label.pack(side=tk.LEFT, anchor=tk.W, padx=5)
+            # Use grid for top_row_frame to manage proportions
+            top_row_frame.grid_rowconfigure(0, weight=1)  # Allow row 0 to expand if needed
+            top_row_frame.grid_columnconfigure(0, weight=6)  # 50% width for the first column
+            top_row_frame.grid_columnconfigure(1, weight=4)  # 50% width for the second column
 
+            # Create left_column and right_column with grid layout
+            left_column = tk.Frame(top_row_frame)
+            left_column.grid(row=0, column=0, sticky="nsew")  # Use grid here, not pack
+            left_column.grid_rowconfigure(0, weight=1)  # Allow row 0 to expand if needed
+
+            right_column = tk.Frame(top_row_frame)
+            right_column.grid(row=0, column=1, sticky="nsew")  # Use grid here, not pack
+
+            # Create the label frame inside the left column
+            label_frame = tk.Frame(left_column, bg="palevioletred4")
+            label_frame.grid(row=0, column=0, sticky="ew", padx=5)  # Ensure it stretches horizontally
+            curve_label = tk.Label(label_frame, text=f"{curve.name}", bg="palevioletred4", fg="white", font=("Arial", 12, "bold"))
+            curve_label.grid(row=0, column=0, sticky="w", padx=5, pady=2)  # Left-aligned label
+
+            delete_button = tk.Button(left_column, text='Delete', command=lambda cf=curve_frame, cv=curve, ci=curve_id: self.delete_curve_frame(cf, cv, ci))
+            delete_button.grid(row=1, column=0, sticky="w", padx=5, pady=2)  # Placed next to the HTML link label
+
+            # HTML link label and delete button in the left column
+            '''
+            html_link_label = tk.Label(left_column, text="View Formula", fg="blue", cursor="hand2")
+            html_link_label.grid(row=1, column=0, sticky="w", padx=5, pady=2)  # Placed below the curve name label
+            html_link_label.bind("<Button-1>", lambda e: open_html_link(curve.html_link))
+            '''
+
+            # Bottom Row-Frame for the Curve
+            left_row_frame = tk.Frame(left_column)
+            left_row_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=5, pady=5)  # This ensures it is placed below the HTML link and delete button
+            self.areas_frames[curve_id] = left_row_frame
+
+            # Frame for all parameters for the curve
+            params_frame = tk.Frame(curve_frame)
+            params_frame.pack(side=tk.TOP, fill=tk.X)
+
+            # Formula image display in the right column
             if curve.formula:
-                # Formula image label (resized using Resize_formula_image)
-                #formula_image_tk = Resize_formula_image(curve.formula)
                 formula_image_tk = ImageTk.PhotoImage(curve.formula)
-                formula_image_label = tk.Label(top_row_frame, image=formula_image_tk)
+                #formula_image_tk = Resize_formula_image(curve.formula)
+                formula_image_label = tk.Label(right_column, image=formula_image_tk)
                 formula_image_label.image = formula_image_tk
                 formula_image_label.pack(side=tk.LEFT, padx=5)
 
-            # Placeholder for HTML link label
-            html_link_label = tk.Label(top_row_frame, text="View Formula", fg="blue", cursor="hand2")
-            html_link_label.pack(side=tk.LEFT, padx=5)
-            html_link_label.bind("<Button-1>", lambda e: open_html_link(curve.html_link))
-
-            # Delete button
-            #delete_button = tk.Button(top_row_frame, text='Delete', command=lambda cf=curve_frame, cv=curve: self.delete_curve_frame(cf, cv)) 
-            delete_button = tk.Button(top_row_frame, text='Delete', command=lambda cf=curve_frame, cv=curve, ci=curve_id: self.delete_curve_frame(cf, cv, ci))
-            delete_button.pack(side=tk.LEFT, padx=5)
-
-            #****************************************************************************************************
-            #  BOTTOM ROW-FRAME FOR THE CURVE
-            # Frame for the bottom row (line style, setup button, delete button, and slider)
-            bottom_row_frame = tk.Frame(curve_frame)
-            bottom_row_frame.pack(side=tk.TOP, fill=tk.X)
-            self.areas_frames[curve_id] = bottom_row_frame
-            
-            #zoom_button = tk.Button(bottom_row_frame, text='Zoom', command=lambda af=area_id: self.zoom_in_area(af)) 
-            #zoom_button.pack(side=tk.LEFT, padx=5)
-            
-            #****************************************************************************************************
-            #  FRAME FOR ALL CONTROLS FOR THE CURVE
-            params_frame = tk.Frame(curve_frame)
-            params_frame.pack(side=tk.TOP, fill=tk.X)
-            
-            #ancor_frame = curve_frame
+            # Handling parameter frames dynamically
             ancor_frame = params_frame
-            print("PARAMS FOR CURVE ", curve)
-            print(curve.params)
             for param, setvals in curve.params.items():
                 span = setvals[3] - setvals[2]
-                scaleFactor = self.DisplayWindow/span
-                print("Scale Factor ", scaleFactor)
+                scaleFactor = self.DisplayWindow / span
                 if param == 't':
                     if curve.is_parametric > 0:
-                        #param_frame = ControlPanel(ancor_frame, curve, "curve", param, curve.tmin, curve.tmax, curve.tmax, curve.tincr, scaleFactor, True , 't', curve.tincr)
-                        param_frame = ControlPanel(ancor_frame, curve, "curve", param, curve.tmin, 2*curve.tmax, curve.tmax, curve.tincr, scaleFactor, True , 't', curve.tincr)
+                        param_frame = ControlPanel(ancor_frame, curve, "curve", param, curve.tmin, 2 * curve.tmax, curve.tmax, curve.tincr, scaleFactor, True, 't', curve.tincr)
                         self.param_frames[curve_id].append(param_frame.control_frame)
-                    '''    
-                    if curve.is_parametric != 0:
-                        if curve.is_parametric == 1:
-                            param_frame = ControlPanel(ancor_frame, curve, "curve", param, curve.tmin, curve.tmax, 0.0, curve.tincr, scaleFactor, True , 't', curve.tincr)
-                        else:
-                            param_frame = ControlPanel(ancor_frame, curve, "curve", param, curve.tmin, curve.tmax, 0.0, curve.tincr, scaleFactor, False, 't', curve.tincr)
-                        #self.curve_frames[area_id][-1][1].append(param_frame.control_frame)
-                        self.param_frames[curve_id].append(param_frame.control_frame
-                    '''
                 else:
                     param_frame = ControlPanel(curve_frame, curve, "curve", param, setvals[2], setvals[3], setvals[4], setvals[5], scaleFactor)
-                    #self.curve_frames[area_id][-1][1].append(param_frame.control_frame)
                     self.param_frames[curve_id].append(param_frame.control_frame)
-                
+
     def update_controls(self):
         def clear_frame(frame):
             for widget in frame.winfo_children():
                 widget.destroy()
 
-        def get_color_for_area(areaID):
-            if areaID in area_colors:
-                R, G, B = area_colors[areaID][0], area_colors[areaID][1], area_colors[areaID][2]
-                return f"#{R:02x}{G:02x}{B:02x}"  # Format as a hex color code
-            else:
-                return "lightblue"
-
         def function_control(above_frame, line_color = "black", line_thickness = 1):
-            f1_frame = tk.Frame(above_frame)    
-            f1_frame.pack(side=tk.LEFT, padx=5) #, fill=tk.X)
+            function_frame = tk.Frame(above_frame)    
+            function_frame.pack(side=tk.LEFT, padx=5) #, fill=tk.X)
                 
             # Line style canvas
-            color_line = tk.Canvas(f1_frame, width=20, height=10)
+            color_line = tk.Canvas(function_frame, width=20, height=10)
             line_id = color_line.create_line(0, 5, 20, 5, fill=line_color, width=line_thickness) 
             color_line.pack(side=tk.LEFT, padx=(2, 2))
 
@@ -691,99 +641,151 @@ class TkinterWindow(tk.Tk):
                 "thickness": line_thickness
             }
 
-            change_button = tk.Button(f1_frame, text="...", command=lambda c=curve, lid=line_id: self.open_curve_settings(c, lid))
+            change_button = tk.Button(function_frame, text="...", command=lambda c=curve, lid=line_id: self.open_curve_settings(c, lid))
             change_button.pack(side=tk.LEFT)  
 
-            return f1_frame
+            return function_frame
             
         for curve_id, curve_frame in self.areas_frames.items():
             clear_frame(curve_frame)  # Clear all widgets in the frame for the curve_id    
             
         for curve_id, curve in self.curve_instances.items():
           if len(self.curve_sets[curve_id].items()) > 0:
-            funControl = function_control(self.areas_frames[curve_id], curve.color, curve.thickness)
+            #funControl = function_control(self.areas_frames[curve_id], curve.color, curve.thickness)
+            funFrame = tk.Frame(self.areas_frames[curve_id])    
+            funFrame.pack(side=tk.LEFT, padx=5) #, fill=tk.X)
             for cSet, aPtrs in self.curve_sets[curve_id].items():
               if len(aPtrs) > 0:
-                f1_label = tk.Label(funControl, text= fn_label[cSet], font=("Times New Roman", 10, "italic bold"))
-                f1_label.pack(side=tk.LEFT, anchor=tk.W, padx=1)          
+                act_color, act_thickness = curve.props[cSet]
+                act_label = curve.labels[cSet]
+                
+                #f1_label = tk.Label(funFrame, text= fn_label[cSet], font=("Times New Roman", 10, "italic bold"))
+                f1_label = tk.Label(funFrame, text= act_label, font=("Times New Roman", 10, "italic bold"))
+                f1_label.pack(side=tk.LEFT, anchor=tk.W, padx=1)
+
+                color_line = tk.Canvas(funFrame, width=20, height=10)
+                line_id = color_line.create_line(0, 5, 20, 5, fill=act_color, width=act_thickness) 
+                color_line.pack(side=tk.LEFT, padx=(2, 2))
+
+                self.line_properties[line_id] = {
+                    "canvas": color_line,
+                    "color": act_color,
+                    "thickness": act_thickness
+                }
+
+                change_button = tk.Button(funFrame, text="...", command=lambda c=curve, sid=cSet, lid=line_id: self.open_curve_settings(c, sid, lid))
+                change_button.pack(side=tk.LEFT)  
+                
                 for aPtr in aPtrs:
                   if aPtr.aid not in self.shown_sets[curve_id][cSet]:
                     new_bg_color = get_color_for_area(aPtr.aid)
-                    button = tk.Button(funControl, text="  ", bg=new_bg_color, fg="blue", command=lambda areaID=aPtr.aid: self.zoom_in_area(areaID))
-                    button.pack(side=tk.LEFT, padx=2, pady=2)  # Add padding for spacing
+                    button = tk.Button(funFrame, text="  ", bg=new_bg_color, fg="blue", command=lambda areaID=aPtr.aid: self.delete_set(areaID))
+                    button.pack(side=tk.LEFT, padx=2, pady=2)  
+     
+    def set_areas_section(self, parent_frame):
+        self.areas_section = tk.Frame(parent_frame, width=self.ControlWindow_w*0.5, height=self.ControlWindow_h*0.1)
+        self.areas_section.pack(fill=tk.BOTH, expand=True)  
+        
+        # Create a label frame for the section title
+        label_frame = tk.Frame(self.areas_section, bg="palevioletred4")
+        label_frame.pack(fill=tk.X)
+
+        section_label = tk.Label(label_frame, text="Areas", bg="palevioletred4", fg="white", font=("Arial", 12, "bold"))
+        section_label.pack(side=tk.LEFT, padx=5, pady=2)
+
+        # Create a controls frame for dynamically added area frames
+        self.areas_controls_frame = tk.Frame(self.areas_section, bg="lightblue")
+        self.areas_controls_frame.pack(fill=tk.BOTH, expand=True)
+        
+    def manage_areas_controls(self):   
+        wAreas = []
+        for curve_set in self.curve_sets.values():
+            for set, Ptrs in curve_set.items():
+                for Ptr in Ptrs:
+                    if Ptr.aid not in wAreas: wAreas.append(Ptr.aid)
+                
+        for widget in self.areas_controls_frame.winfo_children():
+            widget.destroy()                
             
-    def zoom_in_area(self, areaID):
+        for aID in wAreas:
+            new_bg_color = get_color_for_area(aID)
+            
+            #area_border = tk.Canvas(function_frame, width=20, height=10)
+            #line_id = color_line.create_line(0, 5, 20, 5, fill=line_color, width=line_thickness) 
+            #color_line.pack(side=tk.LEFT, padx=(2, 2))
+            
+            area_frame = tk.Frame(self.areas_controls_frame, bg="lightblue", bd=1, relief="solid")
+            area_frame.pack(fill=tk.X, padx=5, pady=2)
+
+            area_label = tk.Label(area_frame, text=f"{aID}", bg="lightblue", font=("Arial", 14, "bold"))
+            area_label.pack(side=tk.LEFT, padx=5, pady=2)
+            
+            button = tk.Button(area_frame, text=f"ZOOM", font=("Arial", 8, "bold"), bg=new_bg_color, fg="midnightblue", command=lambda areaID=aID: self.zoom_in_area(areaID))
+            button.pack(side=tk.LEFT, padx=2, pady=0)
+
+            button = tk.Button(area_frame, text=f"SCALE", font=("Arial", 8, "bold"), bg=new_bg_color, fg="midnightblue", command=lambda areaID=aID: self.zoom_in_area(areaID, False))
+            button.pack(side=tk.LEFT, padx=2, pady=0)
+            
+            self.areas_panels.append(button)
+            
+    def remove_curve_from_area(self, curveID, area):
+        pass
+    
+    def zoom_in_area(self, areaID, uniform = True):
         if areaID in self.pygame_instance.Areas: 
-            self.pygame_instance.Areas[areaID].set_scale()
+            self.pygame_instance.Areas[areaID].set_scale(uniform)
                 
     def delete_curve_frame(self, curve_frame, toDel_curve, curveID):
         for area_id, area in self.pygame_instance.Areas.items():
             if toDel_curve in area.curves:
                 if toDel_curve in area.diags:
                     del area.diags[toDel_curve]
-                area.curves.remove(toDel_curve)  # Remove the curve from the area
+                area.curves.remove(toDel_curve) 
 
-        # Remove curve references from associated dictionaries/lists
         if curveID in self.curve_frames:
             del self.curve_frames[curveID]
+            
         if curveID in self.areas_frames:
             del self.areas_frames[curveID]
+            
         if curveID in self.param_frames:
             del self.param_frames[curveID]
+            
         if curveID in self.curve_instances:
             del self.curve_instances[curveID]
 
         curve_frame.destroy()
-        '''
-        # Ensure an affected area is found
-        if affected_area_id is not None:
-            # Find and destroy the curve frame and its parameter frames in Tkinter
-            curve_list = self.curve_frames.get(affected_area_id, [])
-            for i, (stored_curve_frame, param_frames) in enumerate(curve_list):
-                if stored_curve_frame == curve_frame:
-                    # Destroy each parameter frame associated with this curve frame
-                    for param_frame in param_frames:
-                        param_frame.destroy()
-
-                    # Destroy the curve frame itself
-                    stored_curve_frame.destroy()
-
-                    # Remove this curve frame entry from the list in curve_frames
-                    del curve_list[i]
-                    break
-            if not curve_list:
-                pass
-        '''
         
-        print(f"Deleted curve: {toDel_curve.name}")
         for sArea in self.pygame_instance.Areas.values():
             sArea.set_scale()
 
-    #def open_curve_settings(self, curve):
-    def open_curve_settings(self, curve, line_id):
+    def open_curve_settings(self, curve, set_id, line_id):
         line_data = self.line_properties[line_id]
         current_canvas = line_data["canvas"]
         current_color = line_data["color"]
         current_thickness = line_data["thickness"]
         
-       # Open a modal dialog to change color
+        # Open a modal dialog to change color
         color = colorchooser.askcolor(initialcolor=current_color)[1]
-        if color:  # If a color was chosen
-            self.line_properties[line_id]["color"] = color  # Update the color
-            curve.color = color  # Update the curve's color
-
+        if not color:  # Color was not selected 
+            color = current_color
+        
         # Get the thickness from the user
         thickness = simpledialog.askinteger("Thickness", "Enter thickness:", initialvalue=current_thickness, minvalue=1)
-        if thickness:  # If a thickness was entered
-            self.line_properties[line_id]["thickness"] = thickness  # Update the thickness
-            curve.thickness = thickness 
+        if not thickness:  # Thickness was not entered
+            thickness = current_thickness
+            
+        self.line_properties[line_id]["color"] = color  # Update the color
+        self.line_properties[line_id]["thickness"] = thickness  # Update the thickness
+        
+        curve.color = color  # Update the curve's color
+        curve.thickness = thickness 
+        curve.props[set_id] = color, thickness
 
         current_canvas.itemconfig(line_id,
                                   fill=self.line_properties[line_id]["color"],
                                   width=self.line_properties[line_id]["thickness"])
-
         
-        # Optionally, refresh the display (update the line) after changing settings
         self.add_controls()  # Refresh control panels to reflect changes
         self.update_controls()
         

@@ -30,7 +30,6 @@ class Ticks:
 class Axis:
     def __init__(self):
         self.incr  = 10.0
-        self.tick  = 10.0
         self.tikcs = Ticks()
 
 class Area():
@@ -44,7 +43,9 @@ class Area():
         
         self.R0 = np.array([self.w//2, self.h//2], dtype=np.int32)
 
-        self.scale    = 1.0  # Scaling factor
+        # Scaling factor
+        self.scale    = 1.0  
+        self.scaleX, self.scaleY = 1.0, 1.0 
         
         self.dragging_curve = None  # Track the currently dragged curve
         self.dragging_all   = False
@@ -55,7 +56,6 @@ class Area():
         #self.lock = lck
         
         self.revy = np.array([1.0, -1.0])
-        self.dist_threshold = 5.0   # Threshhold for the calculation of distance to curve at scale = 1.0
         self.tick = 5
         
         self.Xaxis, self.Yaxis, self.Zaxis = Axis(), Axis(), Axis()
@@ -71,30 +71,18 @@ class Area():
         self.rotation_matrix = np.eye(3)
         
     def get_screen_coords(self, inp_coords):
-        screen_coords = self.E0 + self.R0 + inp_coords * self.scale * self.revy
+        screen_coords = self.E0 + self.R0 + inp_coords * np.array([self.scaleX, self.scaleY]) * self.revy
         return screen_coords.astype(np.int32)
         
-    def get_screen_coords3d(self, inp_coords):
-        # Step 1: Rotate the 3D input coordinates
-        #rotated_coords = self.rotation_matrix @ inp_coords  # Apply rotation
-        # Step 1: Rotate all 3D points using matrix multiplication
-        rotated_coords = inp_coords @ self.rotation_matrix.T  # Rotate all points at once
-
-        # Step 2: Project to 2D by using only x and y, then apply scaling, offset, and reversal
-        #screen_coords = self.E0 + self.R0 + rotated_coords[:2] * self.scale * self.revy
-        # Step 2: Project to 2D by using only x and y, then apply scaling, offset, and reversal
-        screen_coords = self.E0 + self.R0 + rotated_coords[:, :2] * self.scale * self.revy
-        
-        return screen_coords.astype(np.int32)        
-
     def get_real_coords(self, screen_point):
-        scaled_coords = (np.array(screen_point) - self.R0 - self.E0) / self.scale
+        scaled_coords = (np.array(screen_point) - self.R0 - self.E0) / np.array([self.scaleX, self.scaleY])
         # Flip the y-coordinate by multiplying by [-1, 1]
         return scaled_coords * self.revy
         
     def zoom(self, mouse_pos, zoom_factor):
         real_pos = self.get_real_coords(mouse_pos)
-        self.scale = self.scale * zoom_factor
+        self.scaleX = self.scaleX * zoom_factor
+        self.scaleY = self.scaleY * zoom_factor
 
         new_screen_pos = self.get_screen_coords(real_pos)  # Already a NumPy array
  
@@ -103,7 +91,7 @@ class Area():
         self.recalculate_grids()
                 
     def draw(self):
-        def Draw_labels(inp_labels, tick_vector, axis_line_color = "black", axis_font_color="blue"):
+        def Draw_labels(inp_labels, axis_vector, tick_vector, tick_span, axis_line_color = "black", axis_font_color="blue", middle_label = True):
           factor     = 1
           add_factor = 0
           if len(inp_labels) > 1:
@@ -120,12 +108,31 @@ class Area():
                 break 
                 
           factor += add_factor
-          
+          Nminor = 5
+          minor_span = tick_span/Nminor
+          baseG = 200
+          thinG = baseG + 25
+          major_color = (baseG, baseG, baseG)
+          minor_color = (thinG, thinG, thinG)
           for Pos in inp_labels:
-            renderLabel   = self.font.render(f"{np.sum(Pos):.{factor}f}", True, axis_font_color)
             screen_coords = self.get_screen_coords(Pos)
-            pygame.draw.line(self.screen, axis_line_color, (screen_coords - tick_vector*self.tick), (screen_coords + tick_vector*self.tick), 1)
-            self.screen.blit(renderLabel, (screen_coords + tick_vector))
+            if np.linalg.norm(Pos) != 0.0:
+                renderLabel   = self.font.render(f"{np.sum(Pos):.{factor}f}", True, axis_font_color)
+                self.screen.blit(renderLabel, (screen_coords + tick_vector))
+            else: 
+                if middle_label:
+                    renderLabel   = self.font.render(f"{np.sum(Pos):.{factor}f}", True, axis_font_color)
+                    self.screen.blit(renderLabel, (screen_coords + tick_vector))
+
+            #pygame.draw.line(self.screen, axis_line_color, (screen_coords - tick_vector*self.tick), (screen_coords + tick_vector*self.tick), 1)
+            pygame.draw.line(self.screen, major_color, (screen_coords - tick_vector*aDim), (screen_coords + tick_vector*aDim), 1)
+            ''' 
+            for mi in range(1,Nminor):
+                mPos = Pos + mi*minor_span*axis_vector
+                m_screen_coords = self.get_screen_coords(mPos)
+                #print(mPos, m_screen_coords, tick_vector*aDim)
+                pygame.draw.line(self.screen, minor_color, (m_screen_coords - tick_vector*aDim), (m_screen_coords + tick_vector*aDim), 1)
+            '''
             
         graphics_area = pygame.Rect(self.E0[0], self.E0[1], self.w - self.margin, self.h)
         self.screen.set_clip(graphics_area)
@@ -139,35 +146,27 @@ class Area():
                     for i in range(len(screen_coors) - 1):
                         pygame.draw.line(self.screen, curve.color, (screen_coors[i]), (screen_coors[i+1]), curve.thickness)
         else:
-            #self.all_curves = [(curve, ['xy']) for shared_system in self.systems for curve in shared_system.curves] + [curve_items for curve_items in zip(self.curves, self.diags)] 
             self.all_curves = [(curve, ['xy']) for shared_system in self.systems for curve in shared_system.curves] + [(curve, self.diags[curve]) for curve in self.curves]
                 
-            Draw_labels(self.Xlabels, np.array((0.0, 1.0)))
-            Draw_labels(self.Ylabels, np.array((1.0, 0.0)))
-            #for curve in self.all_curves:  
+            Draw_labels(self.Xlabels, np.array((1.0, 0.0)), np.array((0.0, 1.0)), self.Xaxis.incr)
+            Draw_labels(self.Ylabels, np.array((0.0, 1.0)), np.array((1.0, 0.0)), self.Yaxis.incr, middle_label = False)
             for curve, diags in self.all_curves:  
-               #if len(curve.x_vec) > 1: #break 
-               if np.count_nonzero(np.any(curve.xyz != 0, axis=1)) > 1:  # Break
+               if np.count_nonzero(np.any(curve.xyz != 0, axis=1)) > 1:  
                   up_idx = curve.current_index + 1
                   for diag in diags:
                     if   diag == 'xy':
-                        #screen_coors = self.get_screen_coords(curve.r_vec)
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.x_vec, curve.y_vec)).T)
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.xyz[:,0], curve.xyz[:,1])).T)
                         screen_coors = self.get_screen_coords(np.vstack((curve.xyz[:up_idx,0], curve.xyz[:up_idx,1])).T)
                     elif diag == 'tx':
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.t_vec, curve.x_vec)).T)
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.t_vec, curve.xyz[:,0])).T)
                         screen_coors = self.get_screen_coords(np.vstack((curve.t_vec[:up_idx], curve.xyz[:up_idx,0])).T)
                     elif diag == 'ty':
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.t_vec, curve.y_vec)).T)
                         screen_coors = self.get_screen_coords(np.vstack((curve.t_vec[:up_idx], curve.xyz[:up_idx,1])).T)
                     elif diag == 'tz':
-                        #screen_coors = self.get_screen_coords(np.vstack((curve.t_vec, curve.z_vec)).T)
                         screen_coors = self.get_screen_coords(np.vstack((curve.t_vec[:up_idx], curve.xyz[:up_idx,2])).T)
                         
+                    act_color, act_thickness = curve.props[diag]
                     for i in range(len(screen_coors) - 1):
-                        pygame.draw.line(self.screen, curve.color, (screen_coors[i]), (screen_coors[i+1]), curve.thickness)
+                        #pygame.draw.line(self.screen, curve.color, (screen_coors[i]), (screen_coors[i+1]), curve.thickness)
+                        pygame.draw.line(self.screen, act_color, (screen_coors[i]), (screen_coors[i+1]), act_thickness)
                         
                     '''
                     last_point = screen_coors[-1]
@@ -179,11 +178,9 @@ class Area():
                     pygame.draw.circle(self.screen, curve.color, last_point, circle_radius+outline_thickness, outline_thickness)
                     '''
         
-    def set_scale(self):
+    def set_scale(self, equal = True):
         all_x = []
         for ci, curve in enumerate(self.curves):
-          print(curve)
-          print(self.diags[curve])
           up_idx = curve.current_index + 1
           for diag in self.diags[curve]:
             #diag_type = self.diags[ci]
@@ -223,35 +220,34 @@ class Area():
             self.min_y = min(float('inf'), min(all_y))
             self.max_y = max(float('-inf'), max(all_y))
             
-            print(f"MinMax for area {self.ID}",  self.min_x, self.max_x, self.min_y, self.max_y)
+            #print(f"MinMax for area {self.ID}",  self.min_x, self.max_x, self.min_y, self.max_y)
             spanX = (self.max_x - self.min_x)*1.2 
-            scaleX = self.w/2.0 if spanX == 0.0 else self.w/spanX
+            self.scaleX = self.w/2.0 if spanX == 0.0 else self.w/spanX
             
             spanY = (self.max_y - self.min_y)*1.2
-            scaleY = self.h/2.0 if spanY == 0.0 else self.h/spanY
+            self.scaleY = self.h/2.0 if spanY == 0.0 else self.h/spanY
            
-            self.scale = min(scaleX, scaleY)
+            if equal:
+              self.scale = min(self.scaleX, self.scaleY)
+              self.scaleX, self.scaleY = self.scale, self.scale
+              
             middleX = (self.max_x + self.min_x)/2.0 
             middleY = (self.max_y + self.min_y)/2.0 
-            print("New scale", self.scale)
-            print(middleX, middleY)
-            print(self.R0)
-            #self.R0 = self.R0 + [-middleX*self.scale, middleY*self.scale]
-            #self.R0 = [middleX*self.scale, middleY*self.scale]
-            self.R0 = np.array([self.w//2, self.h//2], dtype=np.int32) + [-middleX*self.scale, middleY*self.scale]
-            print(self.R0)
+            self.R0 = np.array([self.w//2, self.h//2], dtype=np.int32) + [-middleX*self.scaleX, middleY*self.scaleY]
  
         self.recalculate_grids()
             
     def recalculate_grids(self):
         for denominator in self.denominators:
-            #if self.Xlenght/self.scale/denominator >= 10.0:
-            if self.w/self.scale/denominator >= 10.0:
+            if self.w/self.scaleX/denominator >= 10.0:
                 self.Xaxis.incr = denominator
-                self.Yaxis.incr = denominator
-                if self.in3d:
-                    self.Zaxis.incr = denominator
                 break
+                
+        for denominator in self.denominators:
+            if self.h/self.scaleY/denominator >= 10.0:
+                self.Yaxis.incr = denominator
+                break
+                
         self.make_grids()
         
     def make_grids(self):
@@ -268,7 +264,7 @@ class Area():
             self.Xlabels = np.array(Xlabels_list)
             self.Ylabels = np.array(Ylabels_list)
             # Remove the origin point from Ylabels if required
-            self.Ylabels = self.Ylabels[np.any(self.Ylabels != [0.0, 0.0], axis=1)]
+            #self.Ylabels = self.Ylabels[np.any(self.Ylabels != [0.0, 0.0], axis=1)]
 
 class PygameWindow():
     def __init__(self, tkinter_instance, denoms, axisLines, width=800, height=800, margin=0, axis3dLines = []):
@@ -422,7 +418,6 @@ class PygameWindow():
                                 
                                 # Update the overall rotation matrix by combining new rotations
                                 active_area.rotation_matrix = rotation_y @ rotation_x @ active_area.rotation_matrix
-                                print(active_area.rotation_matrix)
                                 last_mouse_pos = current_mouse_pos    
         
                         elif event.type == pygame.MOUSEBUTTONUP:
@@ -449,11 +444,12 @@ class PygameWindow():
         pass
 
 denominators = Calculate_denominators()
-axis   = funs.LineBunch([([-100000, 0], [100000, 0]), ([0, -100000], [0, 100000])])
-axis3d = funs.LineBunch3d(100000)
+aDim   = 100000
+axis   = funs.LineBunch([([-aDim, 0], [aDim, 0]), ([0, -aDim], [0, aDim])], 2)
+axis3d = funs.LineBunch3d(aDim)
 
 pygame_instance = PygameWindow(None, denominators, [axis], 1000, 1000, axis3dLines = [axis3d]) 
-tkinter_instance = TkinterWindow(pygame_instance, 600, 400, 1000)
+tkinter_instance = TkinterWindow(pygame_instance, 600, 1000, 1000)
 
 pygame_instance.tkinter_instance = tkinter_instance
 
@@ -467,4 +463,3 @@ tkinter_instance.mainloop()
 # Ensure the Pygame thread joins properly
 pygame_thread.join()
 
-print("Both windows closed. Exiting program.")

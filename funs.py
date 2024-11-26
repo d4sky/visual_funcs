@@ -1,17 +1,46 @@
 import numpy as np
-import math
+import math, re 
 
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, odeint, RK45
+
+bColors = {}
+bColors['xy']  = 'orange'
+bColors['tx']  = 'red'
+bColors['ty']  = 'green'
+bColors['tz']  = 'blue'
+bColors['xyz'] = 'indigo'
+
+fn_label = {}
+fn_label['xy'] = "y(x)"
+fn_label['tx'] = "x(t)"
+fn_label['ty'] = "y(t)"
+fn_label['tz'] = "z(t)"
+fn_label['xyz'] = "z(x,y)"
 
 # Base Curve class (shared by all curve types)
 class Curve:
-    def __init__(self, name = "Curve", color="black", thickness = 1, xyz0=[], is_parametric=0, formula=None, inpParams={}):
+    def __init__(self, name = "Curve", color="black", thickness = 1, xyz0=[], is_parametric=0, formula=None, inpParams={}, Neqs = 2, Ndims = 2):
         self.name      = name
         self.color     = color
         self.thickness = thickness
         
         self.is_parametric = is_parametric
-        
+        self.formula = formula
+
+        self.tmin    =  0.0
+        self.tmax    = 10.0
+        self.t0      =  0.0
+        self.tincr   =  1.0
+        self.Npoints = 2
+        self.t_lst   = [self.t0]
+        self.t_vec = np.array(self.t_lst)  
+
+        self.Neqs    = Neqs
+        self.Ndims   = Ndims
+
+        self.xyz0 = xyz0
+        self.erase() 
+
         self.sets = []
         if   is_parametric == 0:
             self.sets = ['xy']
@@ -19,26 +48,16 @@ class Curve:
             self.sets = ['xy', 'tx', 'ty']
         elif is_parametric == 2:
             self.sets['xyz', 'tx', 'ty', 'tz'] 
-            
-        self.xyz0 = xyz0
-        
-        self.formula = formula
-        self.Neqs    = 2
-        
-        self.tmin    =  0.0
-        self.tmax    = 10.0
-        self.t0      =  0.0
-        self.tincr   =  1.0
-        self.Npoints = 2
-        self.t_lst   = [self.t0]
 
-        self.area    = {}
+        self.props  = {}
+        self.labels = {}
         
-        self.params = {}
+        self.area  = {}
+        
+        self.params    = {}
         for param, inpParamSet in inpParams.items():
             if param == 't':
-                #[defMin, defMax, actMin, actMax, actVal, incr, nPts]
-                print(inpParamSet)
+                #print(inpParamSet)
                 self.tmin    = inpParamSet[2] #tmin
                 self.tmax    = inpParamSet[3] #tmax
                 self.t0      = inpParamSet[4] #tmax
@@ -49,25 +68,20 @@ class Curve:
             else:
                 self.params[param] = inpParamSet
                 
-        self.t_vec = np.array(self.t_lst)  
         self.param_map = {}
-        
-        self.erase()
     
     def set_param(self, param, val):
         if param in self.param_map:
             setattr(self, self.param_map[param], val)  # Set the attribute using the mapping
-            if param != 't':
-              self.t_vec = np.array([])  
         else:
             raise ValueError(f"Unknown parameter name: {param}")
             
     def set_params(self):
       for param in self.param_map:
-        if self.params[param] != 't':  
-          self.set_param(param, float(self.params[param][4]))
+        self.set_param(param, float(self.params[param][4]))
 
     def erase(self):
+        self.t_vec = np.zeros(self.Npoints)
         self.xyz = np.zeros((self.Npoints, self.Neqs))
         self.current_index = 0
     
@@ -76,21 +90,112 @@ class Curve:
         self.t_vec = np.linspace(self.tmin, self.tmax, self.Npoints, endpoint=True)  
         self.current_index = len(self.t_vec) - 1
     
+    def after_init(self):
+        self.props  = {set:(bColors[set], 2) for set in self.sets}
+        self.labels = {set:fn_label[set] for set in self.sets}
+        self.set_params()
+        self.calculate()
+    
     #@run_get_min_max_after
     def calculate(self, *args, **kwargs):
         pass
+
+class ODECurve(Curve):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.y  = np.zeros((1, self.Neqs))
+        self.y0 = np.zeros(self.Neqs)
         
+    def odesystem(self, t, z):
+        pass
+            
+    def get_y0_parameters(self):
+        #pattern = re.compile(r"^y0_\d+$")  # Matches "y0_" followed by one or more digits
+        #return {k: v for k, v in vars(self).items() if pattern.match(k)}
+        pattern = re.compile(r"^y0_(\d+)$")  # Captures the digits after "y0_"
+        return {int(pattern.match(k).group(1))-1: v for k, v in vars(self).items() if pattern.match(k)}
+            
+    def set_y0(self):        
+        y0_parameters = self.get_y0_parameters()
+        if set(list(range(self.Neqs))) != set(list(y0_parameters.keys())):
+            print("!"*39)
+            print("Initial parameters are not properly set")
+        else:
+            y0_values = [y0_parameters[ei] for ei in range(self.Neqs)]
+            self.y0 = np.array(y0_values)
+            
+    def after_init(self):
+        self.props = {set:(bColors[set], 2) for set in self.sets}
+        self.labels = {set:fn_label[set] for set in self.sets}
+        self.set_params()  
+        self.set_y0()      
+        self.calculate()   
+            
+    def calculate(self, tIncrement = 0.0):
+        if tIncrement:
+          if  len(self.t_vec) == 0:
+            self.init()
+            self.y  = np.zeros((self.Npoints, self.Neqs))
+            self.set_y0()
+            self.y[0]   = self.y0
+            self.xyz[0] = self.y0
+            
+            self.current_index = 0
+          else:
+            if self.current_index+1 >= len(self.t_vec):
+                self.t_vec = np.concatenate((self.t_vec, np.zeros(self.Npoints)))
+                self.y     = np.vstack(( self.y , np.zeros((self.Npoints, self.Neqs))))
+                self.xyz   = np.vstack((self.xyz, np.zeros((self.Npoints, self.Neqs))))
+ 
+          current_i = self.current_index
+          new_t = self.t_vec[current_i] + tIncrement
+          t_span = (self.t_vec[current_i], new_t)
+          
+          solution = solve_ivp(
+            self.odesystem,
+            t_span,
+            self.y[current_i],  
+            t_eval=[new_t]  
+          )
+          
+          # Update all variables
+          next_i = current_i + 1
+          self.t_vec[next_i] = new_t
+          self.y[next_i] = solution.y[:, -1]  
+          for ei in range(self.Ndims):
+            self.xyz[next_i, ei] = solution.y[ei]
+          self.current_index = next_i
+          
+        else:
+          #meth = "RK45"
+          meth = "RK23"
+          #meth = "Radau"
+          #meth = "BDF"
+          #meth = "LSODA"
+          #meth = "DOP853"
+          self.init()
+          self.set_y0()
+          t_span = (self.t_vec[0], self.t_vec[-1])
+          
+          solution = solve_ivp(
+            self.odesystem,
+            t_span,
+            self.y0,  
+            method=meth,
+            t_eval=self.t_vec  
+          )
+          self.y = solution.y.T
+          for ei in range(self.Ndims):
+            self.xyz[:,ei] = solution.y[ei]
+            
 class Line(Curve):
     def __init__(self, x1=0.0, y1=0.0, x2=0.0, y2=0.0, **kwargs):
         super().__init__(**kwargs)
         self.xyz[0] = [x1, y1]
         self.xyz[1] = [x2, y2]
         self.current_index = 1
-        self.calculate()
-
-    def calculate(self,  *args, **kwargs):
-        pass
-
+        self.props['xy'] = 'black', 2
+        
 class Line3d(Curve):
     def __init__(self, x1=0.0, y1=0.0, z1=0.0, x2=0.0, y2=0.0, z2=0.0, color='black'):
         super().__init__(color=color)
@@ -105,14 +210,11 @@ class Line3d(Curve):
 class Ellipse(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Ellipse"
         self.param_map = {
-            't': 't',
             'a': 'a',
             'b': 'b'
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -122,14 +224,12 @@ class Ellipse(Curve):
 class Linear(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Linear"
         self.param_map = {
             't': 't',
             'y0': 'y0',
             'k': 'k',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -139,15 +239,13 @@ class Linear(Curve):
 class Parabola(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Parabola"
         self.param_map = {
             't': 't',
             'y0': 'y0',
             'a': 'a',
             'x0': 'x0',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -157,15 +255,12 @@ class Parabola(Curve):
 class Sinus(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Sine"
         self.param_map = {
-            't': 't',
             'A': 'A',
             'ω': 'omega',
             'α': 'alpha',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -175,14 +270,12 @@ class Sinus(Curve):
 class Exponential(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Exponential"
         self.param_map = {
             't': 't',
             'A': 'A', 
             'k': 'k',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -192,14 +285,12 @@ class Exponential(Curve):
 class Gaussian(Curve):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = "Gaussian"
         self.param_map = {
             't': 't',
             'σ': 'sigma',
             'µ': 'x0',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -214,8 +305,7 @@ class RoseSin(Curve):
             'A': 'A',
             'n': 'n',
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
 
     def calculate(self, *args, **kwargs):
         self.init()
@@ -224,254 +314,118 @@ class RoseSin(Curve):
         self.xyz[:,0] = t_r*np.cos(t_fi)
         self.xyz[:,1] = t_r*np.sin(t_fi)
 
-class Oscillator(Curve):
+class Oscillator(ODECurve):
     def __init__(self, is_parametric=1, **kwargs):
         super().__init__(is_parametric=is_parametric, **kwargs)
-        self.name = "Oscillator"
         self.param_map = {
             't': 't',
             'k' : 'k', 
-            'x0': 'x0',
-            'y0': 'y0'
+            'x0': 'y0_1',
+            'y0': 'y0_2'
         }
-        self.set_params()
-        self.calculate()
-   
-    def calculate(self, tIncrement = 0.0):
-        def odesystem(t, z):
-            x, y = z
-            dxdt = y
-            dydt = -self.k * self.k * x
-            return [dxdt, dydt]
-        
-        if tIncrement:
-          if  len(self.t_vec) == 0:
-            self.init()
-            self.xyz[0] = [self.x0, self.y0]
-            self.current_index = 0
-          else:
-            if self.current_index+1 >= len(self.t_vec):
-                self.t_vec = np.concatenate((self.t_vec, np.zeros(self.Npoints)))
-                self.xyz   = np.vstack((self.xyz, np.zeros((self.Npoints, self.Neqs))))
- 
-          current_i = self.current_index
-          new_t = self.t_vec[current_i] + tIncrement
-          t_span = (self.t_vec[current_i], new_t)
-          
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.xyz[current_i,0], self.xyz[current_i,1]],  
-            t_eval=[new_t]  
-          )
-          
-          # Update all variables
-          next_i = current_i + 1
-          self.t_vec[next_i] = new_t
-          self.xyz[next_i,0] = solution.y[0]
-          self.xyz[next_i,1] = solution.y[1]
-          self.current_index = next_i
-          
-        else:
-          self.init()
-          t_span = (self.t_vec[0], self.t_vec[-1])
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.x0, self.y0],  # Initial values for x and y
-            t_eval=self.t_vec  # Evaluate at 100 points within t_span
-          )
+        self.after_init()
 
-          self.xyz[:,0] = solution.y[0]
-          self.xyz[:,1] = solution.y[1]
+    def odesystem(self, t, z):
+        x, y = z
+        dxdt = y
+        dydt = -self.k * self.k * x
+        return [dxdt, dydt]
 
-class Newton2D(Curve):
-    def __init__(self, is_parametric=1, **kwargs):
-        super().__init__(is_parametric=is_parametric, **kwargs)
-        self.name = "Newton Equation of Motion in 2D"
+class SIR(ODECurve):
+    def __init__(self, is_parametric=1, Neqs=3, **kwargs):
+        super().__init__(is_parametric=is_parametric,  Neqs=Neqs, Ndims=3, **kwargs)
         self.param_map = {
             't': 't',
-            'm1': 'm1', 
-            'm2': 'm2', 
-            'x0': 'x0',
-            'vx0': 'vx0',
-            'y0': 'y0',
-            'vy0': 'vy0'
+            'β' : 'β', 
+            'γ': 'γ',
+            'S0': 'y0_1',
+            'I0': 'y0_2',
+            'R0': 'y0_3',
         }
-        self.set_params()
-        self.calculate()
-   
-    def calculate(self, tIncrement = 0.0):
-        def inter_init():
-            self.t = self.t0
-            self.x = self.x0
-            self.y = self.y0
-            self.vx = self.vx0
-            self.vy = self.vy0
-            
-            self.t_vec  = np.array([])
-            self.x_vec  = np.array([])
-            self.y_vec  = np.array([])
-            self.vx_vec = np.array([])
-            self.vy_vec = np.array([])
-            
-        def inter_append():
-            '''
-            self.t_vec  = np.append(self.t_vec, self.t)
-            self.x_vec  = np.append(self.x_vec, self.x)
-            self.y_vec  = np.append(self.y_vec, self.y)
-            self.vx_vec = np.append(self.vx_vec, self.vx)
-            self.vy_vec = np.append(self.vy_vec, self.vy)
-            '''
-            
-            new_entry = (self.t, self.x, self.vx, self.y, self.vy)
-            self.t_vec  = np.append(self.t_vec, new_entry[0])
-            self.x_vec  = np.append(self.x_vec, new_entry[1])
-            self.y_vec  = np.append(self.y_vec, new_entry[3])
-            self.vx_vec = np.append(self.vx_vec, new_entry[2])
-            self.vy_vec = np.append(self.vy_vec, new_entry[4])
-            
-        def inter_last():
-            self.t  = self.t_vec[-1]
-            self.x  = self.x_vec[-1]
-            self.y  = self.y_vec[-1]
-            self.vx = self.vx_vec[-1]
-            self.vy = self.vy_vec[-1]
-            
-        def odesystem(t, z):
-            x, y, vx, vy = z
-            r = np.sqrt(x*x + y*y)
-            #Fg = 5.76659520*(self.m1 + self.m2)/(r**3)
-            #Fg = 1.334*(self.m1 + self.m2)/(r**3)
-            #Fg = 6.67e-5*(self.m1 + self.m2)/(r**3)
-            Fg = 6.67*7.465*10*(self.m1 + self.m2)/(r**3)
-            print(Fg)
-
-            dxdt  = vx
-            dydt  = vy
-            dvxdt = -Fg*x
-            dvydt = -Fg*y
-            return [dxdt, dydt, dvxdt, dvydt]
+        self.sets = ['tx', 'ty', 'tz']
+        self.after_init()
+        self.labels['tx'] = "S(t)"
+        self.labels['ty'] = "I(t)"
+        self.labels['tz'] = "R(t)"
         
-        if tIncrement:
-          if  len(self.t_vec) == 0:
-            inter_init()
-            inter_append()
-
-          new_t = self.t + tIncrement
-          t_span = (self.t, new_t)
-          
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.x, self.y, self.vx, self.vy],  # Initial values for x and y
-            t_eval=[new_t]  # Only evaluate at the end of this increment
-          )
-          
-          # Update all variables
-          print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
-          print(solution.y)
-          print('*'*111)
-          self.t = new_t
-          self.x, self.y, self.vx, self.vy = solution.y[:, -1]
-          inter_append()
-          
-        else:
-          self.erase()
-          inter_init()
-          print("HERE WE GO" + '*'*44)
-          t_span = (self.t, self.tmax)
-          print(t_span)
-          self.t_vec = np.linspace(t_span[0], t_span[1], num=self.Npoints)
-          print('-'*55)
-          print(self.t_vec)
-          print('-'*55)
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.x, self.y, self.vx, self.vy],  # Initial values for x and y
-            t_eval=self.t_vec  # Evaluate at 100 points within t_span
-          )
-          print(solution)
-          self.x_vec  = solution.y[0]
-          self.y_vec  = solution.y[2]
-          self.vx_vec = solution.y[1]
-          self.vy_vec = solution.y[3]
-          
-          inter_last()
-          
-class LotkaVolterra(Curve):
+    def odesystem(self, t, z):
+        S, I, R = z
+        dSdt = -self.β * I * S
+        dIdt = self.β * I * S - self.γ * I
+        dRdt = self.γ * I
+        return [dSdt, dIdt, dRdt]
+        
+class LotkaVolterra(ODECurve):
     def __init__(self, is_parametric=1, **kwargs):
         super().__init__(is_parametric=is_parametric, **kwargs)
-        self.name = "Lotka–Volterra equations"
         self.param_map = {
             't': 't',
             'α' : 'α', 
             'β' : 'β', 
             'γ' : 'γ', 
             'δ' : 'δ', 
-            'x0': 'x0',
-            'y0': 'y0'
+            'x0': 'y0_1',
+            'y0': 'y0_2'
         }
-        self.set_params()
-        self.calculate()
+        self.after_init()
         
-    def calculate(self, tIncrement = 0.0):
-        def odesystem(t, z):
-            x, y = z
-            dxdt = y
-            dxdt =  self.α * x - self.β * x * y
-            dydt = -self.γ * y + self.δ * x * y
-            return [dxdt, dydt]
+    def odesystem(self, t, z):
+        x, y = z
+        dxdt = y
+        dxdt =  self.α * x - self.β * x * y
+        dydt = -self.γ * y + self.δ * x * y
+        return [dxdt, dydt]
         
-        if tIncrement:
-          if  len(self.t_vec) == 0:
-            self.t = self.t0
-            self.x = self.x0
-            self.y = self.y0
-            self.t_vec = np.array([self.t])
-            self.x_vec = np.array([self.x])
-            self.y_vec = np.array([self.y])
-  
-          new_t = self.t + tIncrement
-          t_span = (self.t, new_t)
+class LorenzSys(ODECurve):
+    def __init__(self, is_parametric=1, Neqs=3, **kwargs):
+        super().__init__(is_parametric=is_parametric, Neqs=Neqs, **kwargs)
+        self.param_map = {
+            't': 't',
+            'σ': 'σ', 
+            'ρ': 'ρ', 
+            'β': 'β',
+            'x0': 'y0_1',
+            'y0': 'y0_2',
+            'z0': 'y0_3',
+        }
+        self.after_init()
+   
+    def odesystem(self, t, inpY):
+        x, y, z = inpY
 
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.x, self.y],  # Initial values for x and y
-            t_eval=[new_t]  # Only evaluate at the end of this increment
-          )
-       
-          
-          # Update all variables
-          self.t = new_t
-          self.x, self.y = solution.y[:, -1]
-          #print(self.t, self.x, self.y)
-          #self.t_vec = np.array(self.t_lst)
-          self.t_vec = np.append(self.t_vec, self.t)
-          self.x_vec = np.append(self.x_vec, self.x)
-          self.y_vec = np.append(self.y_vec, self.y)
-          
-        else:
-          self.erase()
-          self.t = self.t0
-          self.x = self.x0
-          self.y = self.y0
-          
-          t_span = (self.t, self.tmax)
-          self.t_vec = np.linspace(t_span[0], t_span[1], num=self.Npoints)
-          solution = solve_ivp(
-            odesystem,
-            t_span,
-            [self.x, self.y],  # Initial values for x and y
-            t_eval=self.t_vec  # Evaluate at 100 points within t_span
-          )
-          
-          self.x_vec = solution.y[0]
-          self.y_vec = solution.y[1]
+        dxdt  = self.σ*(y-x)
+        dydt  = x*(self.ρ-z) - y
+        dzdt  = x*y - self.β*z
+        return [dxdt, dydt, dzdt]
+                  
+class Newton2D(ODECurve):
+    def __init__(self, is_parametric=1, Neqs=4, **kwargs):
+        super().__init__(is_parametric=is_parametric, Neqs=Neqs, **kwargs)
+        self.param_map = {
+            't':   't',
+            'm1':  'm1', 
+            'm2':  'm2', 
+            'x0':  'y0_1',
+            'y0':  'y0_2',
+            'vx0': 'y0_3',
+            'vy0': 'y0_4'
+        }
+        self.after_init()
+   
+    def odesystem(self, t, z):
+        x, y, vx, vy = z
+        r = np.sqrt(x*x + y*y)
+        #Fg = 5.76659520*(self.m1 + self.m2)/(r**3)
+        #Fg = 1.334*(self.m1 + self.m2)/(r**3)
+        #Fg = 6.67e-5*(self.m1 + self.m2)/(r**3)
+        Fg = 6.67*7.465*10*(self.m1 + self.m2)/(r**3)
 
-# Hyperbola class derived from Curve
+        dxdt  = vx
+        dydt  = vy
+        dvxdt = -Fg*x
+        dvydt = -Fg*y
+        return [dxdt, dydt, dvxdt, dvydt]
+        
 class Hyperbola(Curve):
     def __init__(self, a, ni, color="cyan"):
         super().__init__(color)
@@ -481,7 +435,6 @@ class Hyperbola(Curve):
 
     def calculate(self):
         self.erase()
-        """Generates points for the hyperbola."""
         i_vals = np.arange(-self.Npoints, self.Npoints)
         i_vals = i_vals[i_vals != 0]  # Exclude zero to avoid division by zero
         i_scaled = i_vals / 100
@@ -490,7 +443,6 @@ class Hyperbola(Curve):
         self.x_vec = self.a * np.cosh(i_scaled) * np.cos(self.ni)
         self.y_vec = self.a * np.sinh(i_scaled) * np.sin(self.ni)
 
-# Ellipse class derived from Curve
 class test3d(Curve):
     def __init__(self, color="green", thickness=1, x0=0.0, y0=0.0, is_parametric=0, formula=None, inpParams={}):
         super().__init__(color, thickness, x0, y0, is_parametric, formula, inpParams)
@@ -505,16 +457,12 @@ class test3d(Curve):
 
     def calculate(self, *args, **kwargs):
         self.erase()
-        """Generates points for the ellipse."""
         #angles = np.linspace(0, 2 * np.pi, self.Npoints, endpoint=True)  
         self.t_vec = np.linspace(self.tmin, self.tmax, self.Npoints, endpoint=True)  
         
-        #self.x = self.x0 + self.a * np.cos(self.t)
-        #self.y = self.y0 + self.b * np.sin(self.t)
         self.x_vec = self.r0[0] + self.a * np.cos(self.t_vec)
         self.y_vec = self.r0[1] + self.b * np.sin(self.t_vec)
 
-# Abstract Bunch class (parent for bunches of curves)
 class Bunch:
     def __init__(self, x0=0, y0=0):
         self.x0 = x0
@@ -522,20 +470,16 @@ class Bunch:
         self.curves = []
 
     def erase(self):
-        """Clears the list of curves."""
         self.curves = []
 
     def add_curve(self, curve):
-        """Adds a single curve to the bunch."""
         self.curves.append(curve)
 
     #def calculate(self):
     def calculate(self, *args, **kwargs):
-        """Abstract method to generate curves (implemented in derived classes)."""
         raise NotImplementedError
 
     def __add__(self, other):
-        """Allows adding two Bunch objects to combine their curves."""
         if not isinstance(other, Bunch):
             raise TypeError("Only Bunch objects can be added together.")
         
@@ -547,22 +491,13 @@ class Bunch:
         return combined_bunch
 
 class LineBunch(Bunch):
-    def __init__(self, point_pairs):
+    def __init__(self, point_pairs, thickness):
         super().__init__()
         for pair in point_pairs:
             x1, y1 = pair[0]
             x2, y2 = pair[1]
-            line = Line(x1, y1, x2, y2)
+            line = Line(x1, y1, x2, y2, thickness = thickness)
             self.add_curve(line)  
-        self.calculate()
-    
-    def erase(self):
-        pass
-        
-    def calculate(self, *args, **kwargs):
-        pass
-        #line = Line(self.xmin, self.xmax)
-        #self.add_curve(line)    
 
 class LineBunch3d(Bunch):
     def __init__(self, ampl = 1000):
@@ -580,10 +515,7 @@ class LineBunch3d(Bunch):
         
     def calculate(self, *args, **kwargs):
         pass
-        #line = Line(self.xmin, self.xmax)
-        #self.add_curve(line)    
 
-# Bunch of ellipses
 class EllipseBunch(Bunch):
     def __init__(self):
         super().__init__()
@@ -591,7 +523,6 @@ class EllipseBunch(Bunch):
 
     def calculate(self, ae=80):
         self.erase()
-        """Generates multiple ellipses and adds them to the bunch."""
         e = ae
         incr = 5.0
         for i in range(1, 10):
@@ -600,7 +531,6 @@ class EllipseBunch(Bunch):
             ellipse = Ellipse(a, b)
             self.add_curve(ellipse)
 
-# Bunch of hyperbolas
 class HyperbolaBunch(Bunch):
     def __init__(self):
         super().__init__()
@@ -608,7 +538,6 @@ class HyperbolaBunch(Bunch):
 
     def calculate(self, ae=80):
         self.erase()
-        """Generates multiple hyperbolas and adds them to the bunch."""
         e = ae
         incr = math.pi / 10
         for i in range(1, 10):
@@ -616,13 +545,11 @@ class HyperbolaBunch(Bunch):
             hyperbola = Hyperbola(e, ani)
             self.add_curve(hyperbola)
 
-# MixedBunch: Combines both Ellipses and Hyperbolas
 class MixedBunch(Bunch):
     def __init__(self):
         super().__init__()
 
     def calculate(self, ae=80):
-        """Generates both ellipses and hyperbolas in a mixed bunch."""
         for curve in self.curves:
             curve.clear_points()  # Clear existing points for each curve
             curve.calculate()     # Recalculate each curve based on its type
