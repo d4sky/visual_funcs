@@ -2,6 +2,7 @@ import sqlite3
 import io
 
 import tkinter as tk
+from tkinter import ttk
 
 from tkinter import colorchooser, simpledialog, messagebox
 from PIL import Image, ImageTk
@@ -46,7 +47,20 @@ class AreaPtr:
          self.curves = {}
 
 class ControlPanel:
-    def __init__(self, parent_frame, shared_item, what="curve_or_system", param='', min_value=20, max_value=200, initial_value=80, step=5, sFactor = 1.0, show_slider = True, alt_name = '', addIncr = 0.0):
+    def __init__(self, parent_frame, shared_item, what="curve_or_system", param='', 
+                 min_value=20, max_value=200, initial_value=80, step=5, sFactor=1.0, 
+                 show_slider=True, alt_name='', addIncr=0.0):
+        # Store initial values
+        self.initial_min_value = min_value
+        self.initial_max_value = max_value
+        self.initial_value = initial_value
+        
+        # Actual values that can be modified
+        self.min_value = min_value
+        self.max_value = max_value
+        self.act_value = initial_value
+        self.step = step
+        
         self.parent_frame = parent_frame
         self.shared_item = shared_item
         self.what = what
@@ -54,59 +68,212 @@ class ControlPanel:
 
         self.DEC_FACTOR = sFactor
         
-        self.act_value = initial_value
-        self.min_value = min_value
-        self.max_value = max_value
-        self.step      = step
-        
         self.addIncr   = addIncr
         self.animating = None  # Keeps track of which animation is active
 
         self.scale_set_values()
                 
-        # Create a frame to hold all elements of the control panel
-        self.control_frame = tk.Frame(parent_frame, bd=1, relief=tk.SOLID)
-        self.control_frame.pack(pady=5, padx=10, fill=tk.X)
+        # Define custom styles and colors
+        self.COLORS = {
+            'bg': '#f5f6f7',           # Very light gray background
+            'fg': '#4a4a4a',           # Dark gray text
+            'button_bg': '#ffffff',    # White buttons
+            'button_fg': '#4a4a4a',    # Dark gray button text
+            'label_fg': '#808080',     # Lighter gray for non-interactive labels
+            'slider_bg': '#ffffff',    # Slider background
+            'slider_fg': '#5b9bd5',    # Soft blue slider
+            'frame_bg': '#ffffff',     # White frame
+            'highlight': '#5b9bd5'     # Soft blue highlight
+        }
         
+        # Create main frame with custom styling
+        self.control_frame = tk.Frame(
+            parent_frame,
+            bd=1,
+            relief=tk.RAISED,
+            bg=self.COLORS['frame_bg'],
+            padx=8,
+            pady=2  # Reduced padding
+        )
+        self.control_frame.pack(pady=2, padx=8, fill=tk.X)  # Reduced padding
+
+        # 1. Parameter label
         param_name = alt_name if alt_name != '' else param
-        self.param_label = tk.Label(self.control_frame, text=param_name, width=5, anchor="w")
-        self.param_label.pack(side=tk.LEFT, padx=5)
+        # Parameter label - fixed width
+        self.param_label = tk.Label(
+            self.control_frame,
+            text=param_name,
+            width=6,  # Fixed width
+            anchor="w",
+            bg=self.COLORS['frame_bg'],
+            fg=self.COLORS['fg'],
+            font=('Helvetica', 9, 'bold')
+        )
+        self.param_label.pack(side=tk.LEFT, padx=4)
+
+        # 2. Value label (showing act_value)
+        # Value label - fixed width
+        self.value_label = tk.Label(
+            self.control_frame,
+            text=str(int(self.act_value)),
+            width=4,  # Fixed width
+            anchor="e",  # Right-align the number
+            bg=self.COLORS['frame_bg'],
+            fg=self.COLORS['highlight'],
+            font=('Helvetica', 9),
+            cursor="hand2"  # Change cursor to indicate clickable
+        )
+        self.value_label.pack(side=tk.LEFT, padx=4)
         
-        self.value_label = tk.Label(self.control_frame, text=str(int(self.scaled_act_value)))
-        self.value_label.pack(side=tk.LEFT, padx=5)
+        # IMPORTANT: Remove any existing bindings first
+        self.value_label.unbind('<Double-Button-1>')
+        
+        # Add new binding for simple value editor
+        self.value_label.bind('<Double-Button-1>', lambda e: self.show_simple_value_editor())
+        self._create_tooltip(self.value_label, "Actual value. Double-click to change.")
+        
+        # Keep the context menu binding
+        self.value_label.bind('<Button-3>', self._show_context_menu)
 
-        self.decrease_button = tk.Button(self.control_frame, text=f"-{self.step}", command=self.decrease_value)
+        # Button style
+        button_style = {
+            'bg': self.COLORS['button_bg'],
+            'fg': self.COLORS['button_fg'],
+            'relief': tk.RAISED,  # Changed to RAISED to look more clickable
+            'padx': 8,
+            'pady': 1,
+            'font': ('Helvetica', 9),
+            'width': 3,
+            'height': 1  # Reduced height
+        }
+
+        # 3. Decrease button
+        self.decrease_button = tk.Button(
+            self.control_frame,
+            text=f"-{self.step}",
+            command=self.decrease_value,
+            **button_style
+        )
         self.decrease_button.pack(side=tk.LEFT, padx=5)
+        self._add_button_hover(self.decrease_button)
 
-        self.min_label = tk.Label(self.control_frame, text=f"{self.min_value:.2f}")
+        # 4. Min value label
+        # Min/max labels - fixed width
+        self.min_label = tk.Label(
+            self.control_frame,
+            text=f"{self.min_value:.2f}",
+            width=6,  # Fixed width
+            anchor="e",  # Right-align
+            bg=self.COLORS['frame_bg'],
+            fg=self.COLORS['label_fg'],  # Lighter color for non-interactive elements
+            font=('Helvetica', 7),  # Smaller font
+        )
         self.min_label.pack(side=tk.LEFT, padx=2)
 
+        # 5. Slider
         if show_slider:
-            self.slider = tk.Scale(
+            self.slider = ttk.Scale(
                 self.control_frame,
-                from_ = self.scaled_min_value,
-                to_   = self.scaled_max_value,
+                from_=self.scaled_min_value,
+                to=self.scaled_max_value,
                 orient=tk.HORIZONTAL,
-                showvalue=0
+                length=150  # Fixed length instead of expanding
             )
-            self.slider.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        self.max_label = tk.Label(self.control_frame, text=f"{self.max_value:.2f}")
+            self.slider.pack(side=tk.LEFT, padx=4)
+
+        # 6. Max value label
+        # Min/max labels - fixed width
+        self.max_label = tk.Label(
+            self.control_frame,
+            text=f"{self.max_value:.2f}",
+            width=6,  # Fixed width
+            anchor="e",  # Right-align
+            bg=self.COLORS['frame_bg'],
+            fg=self.COLORS['label_fg'],  # Lighter color for non-interactive elements
+            font=('Helvetica', 7),  # Smaller font
+        )
         self.max_label.pack(side=tk.LEFT, padx=2)
-        
-        self.increase_button = tk.Button(self.control_frame, text=f"+{self.step}", command=self.increase_value)
+
+        # 7. Increase button
+        self.increase_button = tk.Button(
+            self.control_frame,
+            text=f"+{self.step}",
+            command=self.increase_value,
+            **button_style
+        )
         self.increase_button.pack(side=tk.LEFT, padx=5)
+        self._add_button_hover(self.increase_button)
 
-        self.animate_left_button = tk.Button(self.control_frame, text="<", command=lambda: self.toggle_animation("left"))
-        self.animate_left_button.pack(side=tk.LEFT, padx=2)
+        # Animation buttons - smaller width
+        animation_button_style = {
+            **button_style,
+            'width': 1,  # Reduced from 2
+            'font': ('Helvetica', 10),
+            'relief': tk.FLAT
+        }
 
-        self.animate_right_button = tk.Button(self.control_frame, text=">", command=lambda: self.toggle_animation("right"))
-        self.animate_right_button.pack(side=tk.LEFT, padx=2)
+        # Create a frame for animation and properties buttons to keep them aligned
+        self.control_buttons_frame = tk.Frame(
+            self.control_frame,
+            bg=self.COLORS['frame_bg']
+        )
+        self.control_buttons_frame.pack(side=tk.LEFT, padx=2)
 
-        self.properties_button = tk.Button(self.control_frame, text="...", command=self.show_properties)
-        self.properties_button.pack(side=tk.LEFT, padx=5)
+        # Pack animation and properties buttons in the new frame
+        self.animate_left_button = tk.Button(
+            self.control_buttons_frame,  # Changed parent
+            text="◀",
+            command=lambda: self.toggle_animation("left"),
+            **animation_button_style
+        )
+        self.animate_left_button.pack(side=tk.LEFT, padx=1)
+
+        self.animate_right_button = tk.Button(
+            self.control_buttons_frame,  # Changed parent
+            text="▶",
+            command=lambda: self.toggle_animation("right"),
+            **animation_button_style
+        )
+        self.animate_right_button.pack(side=tk.LEFT, padx=1)
+
+        # Properties button - wider to show gear icon properly
+        self.properties_button = tk.Button(
+            self.control_buttons_frame,
+            text="⚙",
+            command=self.show_properties,
+            **{
+                **animation_button_style, 
+                'width': 2,  # Increased width for gear icon
+                'font': ('Helvetica', 11)
+            }
+        )
+        self.properties_button.pack(side=tk.LEFT, padx=1)
 
         self.set_values()
+
+        # Add state for animation feedback
+        self.is_animating = False
+        
+        # Add tooltips
+        self._create_tooltip(self.decrease_button, f"Decrease value by {step} (Left Arrow)")
+        self._create_tooltip(self.increase_button, f"Increase value by {step} (Right Arrow)")
+        self._create_tooltip(self.animate_left_button, "Animate backwards (Shift+Left)")
+        self._create_tooltip(self.animate_right_button, "Animate forwards (Shift+Right)")
+        self._create_tooltip(self.properties_button, "Show properties (Double-click value)")
+        self._create_tooltip(self.slider, "Drag to adjust value")
+
+        # Bind keyboard shortcuts
+        self.parent_frame.bind('<Left>', self._on_left_arrow)
+        self.parent_frame.bind('<Right>', self._on_right_arrow)
+        self.parent_frame.bind('<Shift-Left>', lambda e: self.toggle_animation("left"))
+        self.parent_frame.bind('<Shift-Right>', lambda e: self.toggle_animation("right"))
+        
+        # Bind right-click menu
+        self._create_context_menu()
+        
+        # Bind double-click on value
+        #self.value_label.bind('<Double-Button-1>', lambda e: self.show_properties())
+        self.value_label.bind('<Double-Button-1>', lambda e: self.show_simple_value_editor())
 
     def set_values(self):
         self.scaled_act_value = int(self.act_value * self.DEC_FACTOR)
@@ -123,22 +290,37 @@ class ControlPanel:
         self.scaled_step      = int(self.step * self.DEC_FACTOR)
 
     def toggle_animation(self, direction):
+        """Toggle animation with visual feedback"""
         if self.animating == direction:
-            self.stop_animation()
+            self.animating = None
+            if direction == "left":
+                self.animate_left_button.configure(relief=tk.FLAT, bg=self.COLORS['button_bg'])
+            else:
+                self.animate_right_button.configure(relief=tk.FLAT, bg=self.COLORS['button_bg'])
         else:
-            self.stop_animation()  # Stop opposite animation, if running
+            if self.animating:  # Stop any existing animation
+                self.animate_left_button.configure(relief=tk.FLAT, bg=self.COLORS['button_bg'])
+                self.animate_right_button.configure(relief=tk.FLAT, bg=self.COLORS['button_bg'])
+            
             self.animating = direction
             if direction == "left":
-                self.animate_left_button.config(text="||")
-                self.animate_right_button.config(text=">")
-                self.scaled_animate_step = -self.scaled_step
-                self.animate_step = -self.step
-            elif direction == "right":
-                self.animate_right_button.config(text="||")
-                self.animate_left_button.config(text="<")
-                self.scaled_animate_step = self.scaled_step
-                self.animate_step = self.step
-            self.perform_animation_step()  # Start the animation loop
+                self.animate_left_button.configure(relief=tk.SUNKEN, bg=self.COLORS['highlight'])
+            else:
+                self.animate_right_button.configure(relief=tk.SUNKEN, bg=self.COLORS['highlight'])
+            
+            # Start the animation
+            self._animate_step()
+
+    def _animate_step(self):
+        """Handle animation steps"""
+        if self.animating:
+            if self.animating == "left":
+                self.decrease_value()
+            else:
+                self.increase_value()
+            
+            # Schedule next animation step
+            self.parent_frame.after(100, self._animate_step)
 
     def perform_animation_step(self):
         if self.animating is None:
@@ -249,6 +431,250 @@ class ControlPanel:
         
         self.popup.destroy()
     
+    def _add_button_hover(self, button):
+        """Add hover effect to buttons"""
+        def on_enter(e):
+            button['bg'] = self.COLORS['highlight']
+            button['fg'] = self.COLORS['frame_bg']
+            
+        def on_leave(e):
+            button['bg'] = self.COLORS['button_bg']
+            button['fg'] = self.COLORS['button_fg']
+            
+        button.bind('<Enter>', on_enter)
+        button.bind('<Leave>', on_leave)
+
+    def _create_tooltip(self, widget, text):
+        """Create a tooltip for a given widget"""
+        def enter(event):
+            x, y, _, _ = widget.bbox("insert")
+            x += widget.winfo_rootx() + 25
+            y += widget.winfo_rooty() + 20
+            
+            # Creates a toplevel window
+            self.tooltip = tk.Toplevel(widget)
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{x}+{y}")
+            
+            label = tk.Label(
+                self.tooltip,
+                text=text,
+                bg="#ffffd0",
+                fg="#000000",
+                relief=tk.SOLID,
+                borderwidth=1,
+                font=("Helvetica", 8, "normal"),
+                padx=3,
+                pady=1
+            )
+            label.pack()
+
+        def leave(event):
+            if hasattr(self, 'tooltip'):
+                self.tooltip.destroy()
+                
+        widget.bind('<Enter>', enter)
+        widget.bind('<Leave>', leave)
+
+    def _create_context_menu(self):
+        """Enhanced context menu"""
+        self.context_menu = tk.Menu(self.control_frame, tearoff=0)
+        self.context_menu.add_command(label="Edit Value...", command=lambda: self._edit_value(None))
+        self.context_menu.add_command(label="Reset to Default", command=self._reset_to_default)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Set Min Value...", 
+                                    command=lambda: self._edit_limit('min'))
+        self.context_menu.add_command(label="Set Max Value...", 
+                                    command=lambda: self._edit_limit('max'))
+        self.context_menu.add_command(label="Reset Min/Max", 
+                                    command=self._reset_limits)
+        self.context_menu.add_separator()
+        self.context_menu.add_command(label="Copy Value", command=self._copy_value)
+        
+        # Bind right-click to all relevant widgets
+        for widget in [self.value_label, self.decrease_button, self.increase_button, self.slider]:
+            widget.bind('<Button-3>', self._show_context_menu)
+
+    def _show_context_menu(self, event):
+        """Show the context menu at mouse position"""
+        self.context_menu.tk_popup(event.x_root, event.y_root)
+
+    def _copy_value(self):
+        """Copy current value to clipboard"""
+        self.parent_frame.clipboard_clear()
+        self.parent_frame.clipboard_append(str(self.act_value))
+
+    def _reset_to_default(self):
+        """Reset to initial value with smooth transition"""
+        self._animate_to_value(self.initial_value)
+
+    def _animate_to_value(self, target_value, steps=10):
+        """Smoothly animate to a target value"""
+        current = self.act_value
+        step = (target_value - current) / steps
+        
+        def animate_step(count):
+            if count < steps:
+                self.act_value = current + (step * count)
+                self.set_values()
+                self.parent_frame.after(20, lambda: animate_step(count + 1))
+            else:
+                self.act_value = target_value
+                self.set_values()
+                
+        animate_step(1)
+
+    def _on_left_arrow(self, event):
+        """Handle left arrow key"""
+        self.decrease_value()
+        self._flash_button(self.decrease_button)
+
+    def _on_right_arrow(self, event):
+        """Handle right arrow key"""
+        self.increase_value()
+        self._flash_button(self.increase_button)
+
+    def _flash_button(self, button):
+        """Visual feedback for button press"""
+        original_bg = button['bg']
+        button.configure(bg=self.COLORS['highlight'])
+        self.parent_frame.after(100, lambda: button.configure(bg=original_bg))
+
+    def show_simple_value_editor(self):
+        """Simple dialog for editing the value"""
+        dialog = tk.Toplevel(self.parent_frame)
+        dialog.title("Edit Value")
+        dialog.transient(self.parent_frame)
+        dialog.grab_set()
+        
+        # Position dialog near the value label
+        x = self.value_label.winfo_rootx()
+        y = self.value_label.winfo_rooty() + self.value_label.winfo_height()
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Create entry with current value
+        value_var = tk.StringVar(value=str(self.act_value))
+        entry = tk.Entry(dialog, textvariable=value_var, width=10)
+        entry.pack(padx=10, pady=5)
+        entry.select_range(0, tk.END)
+        entry.focus()
+
+        def validate_and_set():
+            try:
+                new_value = float(value_var.get())
+                if self.min_value <= new_value <= self.max_value:
+                    self.act_value = new_value
+                    self.set_values()
+                    dialog.destroy()
+                else:
+                    tk.messagebox.showerror(
+                        "Invalid Value",
+                        f"Value must be between {self.min_value:.2f} and {self.max_value:.2f}"
+                    )
+            except ValueError:
+                tk.messagebox.showerror("Invalid Input", "Please enter a valid number")
+
+        # Button frame
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=5)
+        
+        # OK and Cancel buttons
+        tk.Button(button_frame, text="OK", command=validate_and_set, width=8).pack(side=tk.LEFT, padx=2)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=8).pack(side=tk.LEFT, padx=2)
+        
+        # Keyboard bindings
+        entry.bind('<Return>', lambda e: validate_and_set())
+        entry.bind('<Escape>', lambda e: dialog.destroy())
+
+    def _edit_limit(self, which):
+        """Edit min or max limit"""
+        current = self.min_value if which == 'min' else self.max_value
+        initial_min = self.initial_min_value if which == 'max' else float('-inf')
+        initial_max = self.initial_max_value if which == 'min' else float('inf')
+        
+        edit_window = tk.Toplevel(self.parent_frame)
+        edit_window.title(f"Set {which.title()} Value")
+        edit_window.transient(self.parent_frame)
+        
+        value_var = tk.StringVar(value=str(current))
+        entry = tk.Entry(edit_window, textvariable=value_var)
+        entry.pack(padx=10, pady=5)
+        
+        def validate_and_set():
+            try:
+                new_value = float(value_var.get())
+                if initial_min <= new_value <= initial_max:
+                    if which == 'min':
+                        self.min_value = new_value
+                    else:
+                        self.max_value = new_value
+                    self.set_values()
+                    edit_window.destroy()
+                else:
+                    tk.messagebox.showerror(
+                        "Invalid Value",
+                        f"Value must be between {initial_min} and {initial_max}"
+                    )
+            except ValueError:
+                tk.messagebox.showerror("Invalid Input", "Please enter a valid number")
+        
+        tk.Button(edit_window, text="OK", command=validate_and_set).pack(pady=5)
+
+    def _reset_limits(self):
+        """Reset min/max to initial values"""
+        self.min_value = self.initial_min_value
+        self.max_value = self.initial_max_value
+        self.set_values()
+
+    def _edit_simple_value(self, event):
+        """Simple dialog for editing the value"""
+        dialog = tk.Toplevel(self.parent_frame)
+        dialog.title("Edit Value")
+        dialog.transient(self.parent_frame)
+        dialog.grab_set()
+        
+        # Position dialog near the value label
+        x = self.value_label.winfo_rootx()
+        y = self.value_label.winfo_rooty() + self.value_label.winfo_height()
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Create entry with current value
+        value_var = tk.StringVar(value=str(self.act_value))
+        entry = tk.Entry(dialog, textvariable=value_var, width=10)
+        entry.pack(padx=10, pady=5)
+        entry.select_range(0, tk.END)
+        entry.focus()
+
+        def validate_and_set():
+            try:
+                new_value = float(value_var.get())
+                if self.min_value <= new_value <= self.max_value:
+                    self.act_value = new_value
+                    self.set_values()
+                    dialog.destroy()
+                else:
+                    tk.messagebox.showerror(
+                        "Invalid Value",
+                        f"Value must be between {self.min_value:.2f} and {self.max_value:.2f}"
+                    )
+            except ValueError:
+                tk.messagebox.showerror("Invalid Input", "Please enter a valid number")
+
+        # Button frame
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=5)
+        
+        # OK and Cancel buttons
+        tk.Button(button_frame, text="OK", command=validate_and_set, width=8).pack(side=tk.LEFT, padx=2)
+        tk.Button(button_frame, text="Cancel", command=dialog.destroy, width=8).pack(side=tk.LEFT, padx=2)
+        
+        # Keyboard bindings
+        entry.bind('<Return>', lambda e: validate_and_set())
+        entry.bind('<Escape>', lambda e: dialog.destroy())
+
+        # Make sure the dialog stays on top
+        dialog.focus_set()
+
 class AreaSelectionModal(tk.Toplevel):
     def __init__(self, parent, pygame_instance, items, num_areas=4):
         super().__init__(parent)
@@ -793,3 +1219,14 @@ class TkinterWindow(tk.Tk):
         print("Tkinter window closing...")
         self.pygame_instance.running = False
         self.quit()  # Properly stop the Tkinter main loop
+
+def configure_styles():
+    style = ttk.Style()
+    style.configure(
+        "Horizontal.TScale",
+        background="#333333",
+        troughcolor="#404040",
+        slidercolor="#007acc",
+        sliderlength=15,  # Smaller slider handle
+        sliderrelief=tk.FLAT
+    )
